@@ -22,6 +22,7 @@ Limites para os agents do Copilot (`.github/agents/*.agent.md`) que atendem tick
 - `client/src/TelaQuadro.jsx`, `client/src/Lista.jsx`, `client/src/Cartao.jsx`
 - `client/src/App.jsx`: só a parte de quadros
 - `client/src/BarraLateral.jsx`: só a lista de quadros
+- `client/src/api.js`: só a parte de quadros, listas e cartões
 - `client/src/ordem.js`
 - `client/src/componentes/*`
 - `client/src/estilos.css`
@@ -33,10 +34,26 @@ Limites para os agents do Copilot (`.github/agents/*.agent.md`) que atendem tick
 | Área | Caminhos |
 |---|---|
 | Login | `server/src/auth.js` |
-| Banco | `server/src/db.js` (migrações), `server/dados/` |
+| Banco | `server/src/db.js` (migrações), `server/dados/`. Exceção: o agente `banco-de-dados` (veja abaixo) |
 | Atendimento | `server/src/tickets.js`, `client/src/Atendimento.jsx`, `client/src/atendimento.*` |
 | Infraestrutura | `.github/` (workflows e agents), `scripts/`, `vite.config.js`, `package.json`, `package-lock.json` |
 | Credenciais | `.env*` e qualquer secret |
+
+## Agente de banco de dados
+
+Só o agente `banco-de-dados` (`.github/agents/banco-de-dados.agent.md`) mexe no banco, e só quando o `coordenador` o chama para um pedido de produto do quadro de tarefas. Ele pode fazer apenas isto:
+
+- Acrescentar uma migração **no fim** de `MIGRACOES`, em `server/src/db.js`, usando só:
+  - `CREATE TABLE`;
+  - `ADD COLUMN`;
+  - `CREATE INDEX`.
+- Ajustar `server/src/quadros.js` e `server/test/quadros.test.js` para o campo novo.
+
+Limites:
+
+- Não pode editar migrações existentes, nem usar `DROP`, `UPDATE` ou `DELETE` em massa.
+- Não pode tocar nas tabelas de login (`usuario`, `sessao`) nem nas de atendimento (`ticket`, `ticket_message`), nem em `server/dados/`.
+- Mudança destrutiva fica para uma pessoa da equipe.
 
 ## Pedido de produto
 
