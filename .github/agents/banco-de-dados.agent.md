@@ -1,6 +1,8 @@
 ---
-name: banco-de-dados
+name: Banco de Dados
 description: Especialista no banco SQLite do Fluxo. Só é chamado pelo coordenador quando um pedido de produto do quadro de tarefas precisa de tabela, coluna ou índice novos.
+target: github-copilot
+tools: ["read", "search", "edit", "execute"]
 ---
 
 # Agente de banco de dados
