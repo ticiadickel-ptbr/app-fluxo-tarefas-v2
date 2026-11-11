@@ -40,6 +40,7 @@ Faça apenas o necessário para o pedido funcionar. Build e uma conferência bas
   "agents": ["n1", "po", "desenvolvedor", "revisor"],
   "allowedFiles": ["client/src/Cartao.jsx"],
   "criteria": [{ "id": "c1", "description": "comportamento observável que comprova a mudança" }],
+  "review": { "verdict": "approved | changes-requested", "text": "uma frase do Revisor: a mudança atende ao pedido?" },
   "updates": [
     { "id": "u1-entendido", "agent": "n1", "internalText": "detalhe interno", "publicText": "texto do N1 para o cliente" }
   ]
@@ -48,7 +49,8 @@ Faça apenas o necessário para o pedido funcionar. Build e uma conferência bas
 
 - **`outcome: code`:**
   - `allowedFiles` lista os arquivos-fonte alterados;
-  - `criteria` tem ao menos um critério objetivo, com `id` e `description`;
+  - `criteria` tem ao menos um critério objetivo, com `id` e `description`, sem exigir caminho de teste novo;
+  - `review` traz o parecer do Revisor em uma frase;
   - teste novo não é obrigatório.
 - **Outros outcomes** (`answered`, `waiting-customer`, `commercial`, `human-review`): não têm código. `allowedFiles` e `criteria` ficam vazios (`[]`).
 - **`updates`:** cada um tem `id` estável, que não muda nem se repete; `agent`; `internalText`; e o `publicText` redigido pelo N1. Não repita um update que já foi registrado.
@@ -56,8 +58,9 @@ Faça apenas o necessário para o pedido funcionar. Build e uma conferência bas
 
 ## Entrega
 
-- Em `code`, abra um PR com a mudança e o relatório.
-- **Não faça merge e não feche a issue.**
+- Em `code`, abra um PR com a mudança e o relatório. O PR não pode fechar a issue (use `Refs #n`, nunca `Closes #n`).
+- **Não faça merge e não feche a issue.** O controlador espera o build verde do commit atual, integra só se `AUTO_MERGE=true`, e depois do merge publica a resposta do N1 e fecha a issue.
+- Se o build ou o Revisor falhar, o pedido de correção chega com o erro curto e o `requestId`. Corrija **no mesmo PR**, uma única vez: não abra outro PR nem reinicie o trabalho.
 - Se usar um controlador existente, respeite o contrato dele, ou alinhe-o na cópia didática antes de ativar.
 
 ## Limites

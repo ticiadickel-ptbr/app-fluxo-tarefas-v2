@@ -1,6 +1,7 @@
 # Atendimento do app → coordenador de IA via GitHub Actions (AGENT_RUNTIME=github-actions).
-# Início: issue aberta pelo backend (token do usuário, então o evento é emitido) ou workflow_dispatch (retomada).
-# Controlador e instruções vêm sempre da main. Conteúdo da issue e da IA nunca é interpolado em shell.
+# Início: issue aberta pelo backend (token do usuário, então o evento é emitido) ou workflow_dispatch (retomada,
+# correção no mesmo PR). Controlador e instruções vêm sempre da main. Conteúdo da issue e da IA nunca é interpolado em shell.
+# Entrega: o PR só é aceito com build verde do commit atual; AUTO_MERGE=false (padrão) deixa o PR para a demonstração.
 name: ai-agents
 
 on:
@@ -16,18 +17,27 @@ on:
         description: Chamar a IA de novo numa rodada que ficou incerta (timeout ou erro de rede)
         type: boolean
         default: false
+      correcao:
+        description: Correção no mesmo PR (o controlador dispara; use à mão só se o disparo falhou)
+        type: boolean
+        default: false
+  # PR integrado por uma pessoa: só resposta do N1 e fechamento. pull_request_target usa o workflow da main
+  # e aqui nenhum código do PR é baixado ou executado.
+  pull_request_target:
+    types: [closed]
+    branches: [main]
 
 permissions: {}
 
-# Uma execução por issue por vez; a seguinte espera e relê o estado.
+# Uma execução por issue (ou por PR) por vez; a seguinte espera e relê o estado.
 concurrency:
-  group: ai-agents-issue-${{ github.event.issue.number || inputs.issue_number }}
+  group: ai-agents-${{ github.event.issue.number || inputs.issue_number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   coordenar:
     if: >-
-      vars.AGENT_RUNTIME == 'github-actions' &&
+      vars.AGENT_RUNTIME == 'github-actions' && github.event_name != 'pull_request_target' &&
       (github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'origin:app'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -46,13 +56,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validar origem e montar entrada do coordenador
+      - name: Validar origem, retomar entrega pendente e montar entrada do coordenador
         id: preparar
         run: node automacao/controlador.mjs preparar
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
           RETOMAR_INCERTO: ${{ inputs.retomar_incerto }}
+          CORRECAO: ${{ inputs.correcao }}
           APP_BACKEND_LOGIN: ${{ vars.APP_BACKEND_LOGIN }}
 
       # Único passo com a chave da IA; não recebe GITHUB_TOKEN. No máximo uma chamada, com timeout.
@@ -77,6 +88,7 @@ jobs:
           REQUEST_ID: ${{ steps.preparar.outputs.request_id }}
           RESULT_PATH: ${{ steps.preparar.outputs.result_path }}
           AGENT_DRY_RUN: ${{ vars.AGENT_DRY_RUN || 'true' }}
+          CORRECAO: ${{ inputs.correcao }}
 
       - uses: actions/upload-artifact@v4
         if: always() && steps.preparar.outputs.executar == 'true'
@@ -88,7 +100,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # Só com outcome code validado: grava os arquivos permitidos numa branch e abre PR em rascunho. Sem chave da IA.
+  # Só com outcome code validado: grava os arquivos permitidos numa branch e abre o PR (ou, na correção, atualiza o MESMO PR).
+  # Não executa o código gerado e não tem a chave da IA.
   propor-pr:
     needs: coordenar
     if: needs.coordenar.outputs.tem_mudancas == 'true'
@@ -100,6 +113,7 @@ jobs:
       issues: write
     outputs:
       branch: ${{ steps.aplicar.outputs.branch }}
+      sha: ${{ steps.aplicar.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -111,14 +125,15 @@ jobs:
         with:
           name: resultado-${{ needs.coordenar.outputs.request_id }}
           path: .ai-work
-      - name: Aplicar mudanças permitidas e abrir PR
+      - name: Aplicar mudanças permitidas e abrir PR (ou corrigir o mesmo PR)
         id: aplicar
         run: node automacao/controlador.mjs aplicar
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          CORRECAO: ${{ inputs.correcao }}
 
-  # Build da proposta: código gerado roda aqui, sem segredos e só com leitura.
+  # Build do commit EXATO proposto: código gerado roda aqui, sem segredos e só com leitura.
   conferir-pr:
     needs: propor-pr
     if: needs.propor-pr.outputs.branch != ''
@@ -129,7 +144,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.propor-pr.outputs.branch }}
+          ref: ${{ needs.propor-pr.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -137,3 +152,58 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  # Controlador da main: não baixa nem executa o PR. Confere origem, requestId, caminhos e o build do commit atual;
+  # com falha pede uma única correção no mesmo PR; com AUTO_MERGE=true integra (a API respeita as regras da branch).
+  entregar:
+    needs: [propor-pr, conferir-pr]
+    if: always() && needs.propor-pr.result == 'success' && needs.propor-pr.outputs.branch != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Conferir o PR, entregar a resposta e fechar a issue
+        run: node automacao/controlador.mjs entregar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          BUILD_RESULT: ${{ needs.conferir-pr.result }}
+          HEAD_SHA: ${{ needs.propor-pr.outputs.sha }}
+          AUTO_MERGE: ${{ vars.AUTO_MERGE || 'false' }}
+
+  # PR da IA integrado (ou fechado) por uma pessoa: resposta do N1 e fechamento, sem IA.
+  pos-merge:
+    if: >-
+      vars.AGENT_RUNTIME == 'github-actions' && github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'ai/issue-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node automacao/controlador.mjs pos-merge
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
