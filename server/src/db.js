@@ -83,6 +83,21 @@ const MIGRACOES = [
      ('msg-boas-vindas-2', 'ticket-boas-vindas', 'agent', 'Suporte Fluxo', 'Olá! Por enquanto todos os quadros ficam visíveis para quem acessa o Fluxo, então basta enviar o endereço para a sua equipe.
 
 O convite por e-mail, com permissões por quadro, está no nosso planejamento. Posso ajudar com mais alguma coisa?', '2026-11-10T14:02:00.000Z');`,
+  // Dono do ticket (hash do cookie do navegador; NULL = tickets antigos, visíveis como antes) e
+  // vínculo com a issue do GitHub. Só o estado necessário para reconciliar o resultado da IA.
+  `ALTER TABLE ticket ADD COLUMN owner_id TEXT;
+   CREATE TABLE ticket_github (
+     ticket_id TEXT PRIMARY KEY REFERENCES ticket(id) ON DELETE CASCADE,
+     issue_number INTEGER,
+     request_id TEXT,
+     run_id TEXT,
+     result_path TEXT,
+     pr_url TEXT,
+     fase TEXT NOT NULL,
+     mensagens_enviadas TEXT NOT NULL DEFAULT '[]',
+     consultado_em TEXT,
+     atualizado_em TEXT NOT NULL
+   )`,
 ];
 
 /** `caminho` = arquivo do banco; `:memory:` nos testes. */

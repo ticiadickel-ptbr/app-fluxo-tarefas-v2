@@ -4,8 +4,10 @@ import { criarApp } from "../src/app.js";
 import { tituloDaMensagem } from "../src/tickets.js";
 
 let base, servidor;
+let cookie = ""; // o mesmo "navegador" em todos os testes: o dono dos tickets criados
 const chamar = async (metodo, caminho, corpo) => {
-  const r = await fetch(base + caminho, { method: metodo, headers: { "content-type": "application/json" }, body: corpo === undefined ? undefined : JSON.stringify(corpo) });
+  const r = await fetch(base + caminho, { method: metodo, headers: { "content-type": "application/json", cookie }, body: corpo === undefined ? undefined : JSON.stringify(corpo) });
+  cookie = r.headers.get("set-cookie")?.split(";")[0] ?? cookie;
   return { status: r.status, dados: r.status === 204 ? null : await r.json() };
 };
 

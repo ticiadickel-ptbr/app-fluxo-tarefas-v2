@@ -1,0 +1,138 @@
+# Atendimento do app → coordenador de IA via GitHub Actions (AGENT_RUNTIME=github-actions).
+# Início: issue aberta pelo backend (token do usuário, então o evento é emitido) ou workflow_dispatch (retomada).
+# Controlador e instruções vêm sempre da main. Conteúdo da issue e da IA nunca é interpolado em shell.
+name: ai-agents
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Número da issue origin:app
+        required: true
+        type: string
+      retomar_incerto:
+        description: Chamar a IA de novo numa rodada que ficou incerta (timeout ou erro de rede)
+        type: boolean
+        default: false
+
+permissions: {}
+
+# Uma execução por issue por vez; a seguinte espera e relê o estado.
+concurrency:
+  group: ai-agents-issue-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  coordenar:
+    if: >-
+      vars.AGENT_RUNTIME == 'github-actions' &&
+      (github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'origin:app'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      tem_mudancas: ${{ steps.publicar.outputs.tem_mudancas }}
+      request_id: ${{ steps.preparar.outputs.request_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validar origem e montar entrada do coordenador
+        id: preparar
+        run: node automacao/controlador.mjs preparar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          RETOMAR_INCERTO: ${{ inputs.retomar_incerto }}
+          APP_BACKEND_LOGIN: ${{ vars.APP_BACKEND_LOGIN }}
+
+      # Único passo com a chave da IA; não recebe GITHUB_TOKEN. No máximo uma chamada, com timeout.
+      - name: Chamar o coordenador (IA ou ensaio)
+        if: steps.preparar.outputs.executar == 'true'
+        timeout-minutes: 5
+        run: node automacao/controlador.mjs chamar
+        env:
+          AGENT_DRY_RUN: ${{ vars.AGENT_DRY_RUN || 'true' }}
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_BASE_URL: ${{ vars.AI_BASE_URL }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+
+      - name: Validar resultado e publicar na issue
+        id: publicar
+        if: always() && steps.preparar.outputs.executar == 'true'
+        run: node automacao/controlador.mjs publicar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REQUEST_ID: ${{ steps.preparar.outputs.request_id }}
+          RESULT_PATH: ${{ steps.preparar.outputs.result_path }}
+          AGENT_DRY_RUN: ${{ vars.AGENT_DRY_RUN || 'true' }}
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.preparar.outputs.executar == 'true'
+        with:
+          name: resultado-${{ steps.preparar.outputs.request_id }}
+          path: |
+            .ai-work/resultados/
+            .ai-work/mudancas.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Só com outcome code validado: grava os arquivos permitidos numa branch e abre PR em rascunho. Sem chave da IA.
+  propor-pr:
+    needs: coordenar
+    if: needs.coordenar.outputs.tem_mudancas == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      branch: ${{ steps.aplicar.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: resultado-${{ needs.coordenar.outputs.request_id }}
+          path: .ai-work
+      - name: Aplicar mudanças permitidas e abrir PR
+        id: aplicar
+        run: node automacao/controlador.mjs aplicar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+
+  # Build da proposta: código gerado roda aqui, sem segredos e só com leitura.
+  conferir-pr:
+    needs: propor-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.propor-pr.outputs.branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
