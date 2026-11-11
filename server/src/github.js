@@ -4,7 +4,9 @@
 import { execFileSync } from "node:child_process";
 import { LABEL_ORIGEM, MARCA_MENSAGEM, WORKFLOW, lerEstado, marcaTicket, ticketDaIssue } from "../../automacao/protocolo.mjs";
 
-const CONSULTA_MINIMA_MS = 15_000;
+const CONSULTA_MINIMA_MS = 6_000; // entre consultas ao GitHub por ticket; o botão "Atualizar" reduz para o mínimo abaixo
+const CONSULTA_FORCADA_MS = 2_000;
+const FASES_FINAIS = ["entregue", "ensaio"]; // nada mais a buscar até o cliente escrever de novo
 
 /** Cliente REST mínimo. `repo` = "dono/nome". */
 export function clienteGitHub({ repo, ghBin = "gh" }) {
@@ -79,13 +81,15 @@ export function integracaoGitHub(db, cliente, { log = console } = {}) {
     tem: (ticketId) => Boolean(vinculo(ticketId)),
 
     /**
-     * Traz o resultado do workflow para o app. Consulta no máximo a cada 15 s por ticket.
-     * Devolve as mensagens do N1 ainda não entregues, já marcadas como enviadas.
+     * Traz o andamento e as mensagens do workflow para o app. Consulta no máximo a cada 6 s por ticket
+     * (a cada 2 s com `forcar`, do botão "Atualizar"). Devolve as mensagens do N1 ainda não entregues, já marcadas como enviadas.
      */
-    async reconciliar(ticket) {
+    async reconciliar(ticket, { forcar = false } = {}) {
       const v = vinculo(ticket.id);
       if (!v) return [];
-      if (v.consultado_em && Date.now() - Date.parse(v.consultado_em) < CONSULTA_MINIMA_MS) return [];
+      if (FASES_FINAIS.includes(v.fase)) return [];
+      const minimo = forcar ? CONSULTA_FORCADA_MS : CONSULTA_MINIMA_MS;
+      if (v.consultado_em && Date.now() - Date.parse(v.consultado_em) < minimo) return [];
       gravar(ticket.id, { consultado_em: agora() });
 
       if (!v.issue_number) {
@@ -101,6 +105,8 @@ export function integracaoGitHub(db, cliente, { log = console } = {}) {
 
       const { estado } = lerEstado(await cliente.comentarios(v.issue_number));
       if (!estado) return [];
+      const ultimaDoCliente = db.prepare("SELECT criado_em FROM ticket_message WHERE ticket_id = ? AND role = 'user' ORDER BY criado_em DESC, rowid DESC LIMIT 1").get(ticket.id);
+      const acabouDeEscrever = ultimaDoCliente && Date.now() - Date.parse(ultimaDoCliente.criado_em) < 120_000;
       const enviadas = new Set(JSON.parse(v.mensagens_enviadas));
       const novas = (estado.publico ?? []).filter((m) => m?.id && typeof m.texto === "string" && m.texto.trim() && !enviadas.has(m.id));
       for (const m of novas) enviadas.add(m.id);
@@ -109,7 +115,9 @@ export function integracaoGitHub(db, cliente, { log = console } = {}) {
         run_id: estado.runId ? String(estado.runId) : v.run_id,
         result_path: estado.resultPath ?? v.result_path,
         pr_url: estado.pr ?? v.pr_url,
-        fase: estado.fase ?? v.fase,
+        // Cliente acabou de escrever e o workflow ainda não abriu rodada nova: mantém "aguardando-ia" (por até 2 min)
+        // em vez de voltar à fase antiga. Se o workflow decidir não rodar, a fase real volta a valer.
+        fase: v.fase === "aguardando-ia" && estado.requestId === v.request_id && acabouDeEscrever ? "aguardando-ia" : estado.fase ?? v.fase,
         mensagens_enviadas: JSON.stringify([...enviadas]),
       });
       return novas;

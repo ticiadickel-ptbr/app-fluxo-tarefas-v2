@@ -47,10 +47,10 @@ export function rotasDeTickets(app, db, { github = null } = {}) {
   };
 
   /** Traz o resultado do workflow como mensagem do N1. Falha do GitHub nunca derruba a tela. */
-  const reconciliar = async (t) => {
+  const reconciliar = async (t, { forcar = false } = {}) => {
     if (!github?.tem(t.id)) return;
     try {
-      const novas = await github.reconciliar(t);
+      const novas = await github.reconciliar(t, { forcar });
       if (!novas.length) return;
       transacao(db, () => {
         for (const m of novas) inserirMensagem(t.id, "agent", "Suporte N1", m.texto.trim().slice(0, MAX_MENSAGEM), new Date().toISOString());
@@ -61,10 +61,21 @@ export function rotasDeTickets(app, db, { github = null } = {}) {
     }
   };
 
+  /**
+   * Andamento do atendimento automático (só tickets ligados à issue): fase atual e se ainda há trabalho em curso.
+   * Serve para a tela continuar consultando enquanto o agente trabalha, mesmo depois da primeira mensagem dele.
+   */
+  const FASES_EM_CURSO = ["criando-issue", "issue-criada", "aguardando-ia", "chamando-ia", "proposta-pronta", "pr-aberto", "correcao-solicitada", "entregando"];
+  const andamento = (ticketId) => {
+    const g = db.prepare("SELECT fase FROM ticket_github WHERE ticket_id = ?").get(ticketId);
+    return g ? { phase: g.fase, working: FASES_EM_CURSO.includes(g.fase) } : null;
+  };
+
   /** Ticket com o resumo que a lista lateral precisa: última mensagem e se aguarda resposta. */
   const saidaTicket = (t) => {
     const ultima = db.prepare("SELECT role, content FROM ticket_message WHERE ticket_id = ? ORDER BY criado_em DESC, rowid DESC LIMIT 1").get(t.id);
     return {
+      automation: andamento(t.id),
       id: t.id,
       title: t.title,
       status: t.status,
@@ -117,7 +128,7 @@ export function rotasDeTickets(app, db, { github = null } = {}) {
 
   app.get("/api/tickets/:id", async (ctx) => {
     let t = buscar(ctx.params.id, donoDoPedido(ctx));
-    await reconciliar(t);
+    await reconciliar(t, { forcar: ctx.url.searchParams.get("agora") === "1" }); // botão "Atualizar" da tela
     t = buscar(t.id);
     return { ticket: saidaTicket(t), messages: mensagens(t.id) };
   });

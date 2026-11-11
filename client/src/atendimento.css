@@ -98,8 +98,16 @@
 .msg-autor { font-weight: 600; color: var(--noite); display: flex; align-items: baseline; gap: var(--e2); }
 .msg-texto { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: 15px; color: var(--texto); }
 
-.msg-aguardando .msg-avatar { background: var(--fundo); color: var(--secundario); }
-.msg-aguardando .msg-texto { color: var(--secundario); font-size: var(--corpo); }
+/* andamento do atendimento automático: estado, não mensagem de agente */
+.andamento {
+  display: flex; align-items: center; gap: var(--e2);
+  color: var(--secundario); font-size: var(--meta);
+  padding-left: calc(32px + var(--e3));
+}
+.andamento-ponto { width: 8px; height: 8px; border-radius: var(--r-cheio); background: var(--borda-forte); flex: none; }
+.andamento[data-em-curso] .andamento-ponto { background: var(--oceano); animation: pulsar 1.2s ease-in-out infinite; }
+@keyframes pulsar { 0%, 100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+.botao[aria-busy="true"] svg { animation: girar 900ms linear infinite; }
 
 /* rodapé com o campo de mensagem */
 

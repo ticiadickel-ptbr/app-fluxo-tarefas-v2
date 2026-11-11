@@ -9,8 +9,8 @@ import { Dialogo } from "./componentes/Dialogo.jsx";
 import { Icone } from "./componentes/Icone.jsx";
 import { Menu } from "./componentes/Menu.jsx";
 
-/** Enquanto um ticket aguarda resposta, a conversa é consultada neste intervalo (agentes respondem pela API). */
-const INTERVALO_CONSULTA = 5000;
+/** Enquanto o atendimento trabalha ou aguarda resposta, a conversa é consultada neste intervalo (o backend vai buscar na issue). */
+const INTERVALO_CONSULTA = 4000;
 
 const SUGESTOES = [
   "Não consigo mover um cartão entre listas",
@@ -90,14 +90,31 @@ function Mensagem({ mensagem }) {
   );
 }
 
-function AguardandoResposta() {
+/** Andamento do atendimento automático. Descreve o que está acontecendo; NÃO é uma mensagem de agente. */
+const ANDAMENTO = {
+  "criando-issue": "Enviando o pedido ao atendimento…",
+  "issue-criada": "Pedido enviado. Aguardando o atendimento começar…",
+  "aguardando-ia": "Pedido enviado. Aguardando o atendimento começar…",
+  "chamando-ia": "O atendimento está analisando o pedido…",
+  "proposta-pronta": "Mudança proposta. Preparando a conferência…",
+  "pr-aberto": "Conferindo a mudança (build e testes)…",
+  "correcao-solicitada": "A conferência pediu um ajuste. Corrigindo a mudança…",
+  entregando: "Finalizando a resposta…",
+  "pr-pronto": "Mudança conferida. Aguardando a equipe integrá-la.",
+  "aguardando-regras": "Mudança conferida, mas as regras do repositório impedem a integração. Aguardando a equipe.",
+  "pendente-instrutor": "Aguardando decisão da equipe.",
+  "pr-fechado": "A mudança proposta foi encerrada sem integração. Aguardando a equipe.",
+  incerto: "A análise ficou incerta e precisa ser retomada pela equipe.",
+  ensaio: "Atendimento automático em modo de ensaio: nenhum agente de IA analisou esta mensagem, então não há resposta.",
+};
+
+function Andamento({ automacao }) {
+  const texto = ANDAMENTO[automacao?.phase];
+  if (!texto) return null;
   return (
-    <li className="msg msg-agente msg-aguardando" role="status">
-      <span className="msg-avatar" aria-hidden="true"><Icone nome="suporte" tamanho={16} /></span>
-      <div className="msg-corpo">
-        <p className="msg-autor">Atendimento</p>
-        <p className="msg-texto">Recebemos sua mensagem. A resposta aparece aqui assim que o atendimento responder.</p>
-      </div>
+    <li className="andamento" data-em-curso={automacao.working ? "" : undefined} role="status">
+      <span className="andamento-ponto" aria-hidden="true" />
+      <span>{texto}</span>
     </li>
   );
 }
@@ -168,6 +185,7 @@ export function Atendimento({ caminho, navegar }) {
   const [naoEncontrado, setNaoEncontrado] = useState(false);
   const [rascunho, setRascunho] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [atualizando, setAtualizando] = useState(false);
   const [erro, setErro] = useState(null);
   const [dialogo, setDialogo] = useState(null);
   const [tentativa, setTentativa] = useState(0);
@@ -179,7 +197,11 @@ export function Atendimento({ caminho, navegar }) {
 
   /** Coloca o ticket atualizado no topo do histórico (ou o insere, se for novo). */
   const atualizarNoHistorico = (ticket) =>
-    setTickets((atual) => [ticket, ...(atual ?? []).filter((t) => t.id !== ticket.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    setTickets((atual) => {
+      const antigo = (atual ?? []).find((t) => t.id === ticket.id);
+      if (antigo && JSON.stringify(antigo) === JSON.stringify(ticket)) return atual; // nada mudou: não redesenha a lateral
+      return [ticket, ...(atual ?? []).filter((t) => t.id !== ticket.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    });
 
   // Histórico de tickets.
   useEffect(() => {
@@ -222,26 +244,40 @@ export function Atendimento({ caminho, navegar }) {
     campoRef.current?.focus();
   }, [ticketId]);
 
-  // Enquanto aguarda resposta, consulta a conversa para mostrar o que o atendimento escrever.
-  const aguardando = Boolean(conversa?.ticket.awaitingReply);
+  // Enquanto o atendimento trabalha (ou aguarda resposta), consulta a conversa e mostra cada mensagem assim que o N1 a publica.
+  // Não para na primeira resposta: continua até o andamento terminar. O botão "Atualizar" faz a mesma consulta na hora.
+  const acompanhando = Boolean(conversa && (conversa.ticket.awaitingReply || conversa.ticket.automation?.working));
   const idConversa = conversa?.ticket.id ?? null;
+  const mudou = (a, b) =>
+    a.messages.length !== b.messages.length || a.ticket.awaitingReply !== b.ticket.awaitingReply || a.ticket.status !== b.ticket.status ||
+    a.ticket.automation?.phase !== b.ticket.automation?.phase;
+  const sincronizar = async (id, agora = false) => {
+    const d = await api.tickets.detalhe(id, { agora });
+    // Não mexe numa conversa com envio em andamento: a resposta do envio é quem a atualiza.
+    setConversa((atual) => (atual?.ticket.id === id && !atual.messages.some((m) => m.pendente) && mudou(atual, d) ? d : atual));
+    atualizarNoHistorico(d.ticket);
+  };
   useEffect(() => {
-    if (!aguardando || !idConversa) return;
-    const id = idConversa;
-    const timer = setInterval(async () => {
-      try {
-        const d = await api.tickets.detalhe(id);
-        // Não mexe numa conversa com envio em andamento: a resposta do envio é quem a atualiza.
-        setConversa((atual) =>
-          atual?.ticket.id === id && !atual.messages.some((m) => m.pendente) && d.messages.length !== atual.messages.length ? d : atual,
-        );
-        if (!d.ticket.awaitingReply) atualizarNoHistorico(d.ticket);
-      } catch {
-        /* silencioso: a próxima consulta tenta de novo */
-      }
-    }, INTERVALO_CONSULTA);
-    return () => clearInterval(timer);
-  }, [aguardando, idConversa]);
+    if (!acompanhando || !idConversa) return;
+    const consultar = () => { if (!document.hidden) sincronizar(idConversa).catch(() => { /* a próxima consulta tenta de novo */ }); };
+    const timer = setInterval(consultar, INTERVALO_CONSULTA);
+    document.addEventListener("visibilitychange", consultar); // ao voltar para a aba, atualiza na hora
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", consultar); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [acompanhando, idConversa]);
+
+  const atualizarAgora = async () => {
+    if (!idConversa || atualizando) return;
+    setAtualizando(true);
+    try {
+      await sincronizar(idConversa, true);
+      setErro(null);
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setAtualizando(false);
+    }
+  };
 
   // Rola até a última mensagem quando a conversa cresce.
   const totalMensagens = conversa?.messages.length ?? 0;
@@ -349,12 +385,15 @@ export function Atendimento({ caminho, navegar }) {
         <header className="chat-topo">
           <div className="chat-topo-titulo">
             <h1 title={ticket.title}>{ticket.title}</h1>
-            <span className="chat-status" data-status={resolvido ? "closed" : ticket.awaitingReply ? "aguardando" : "open"}>
-              {resolvido ? "Resolvido" : ticket.awaitingReply ? "Aguardando resposta" : "Aberto"}
+            <span className="chat-status" data-status={resolvido ? "closed" : ticket.awaitingReply || ticket.automation?.working ? "aguardando" : "open"}>
+              {resolvido ? "Resolvido" : ticket.automation?.working ? "Em andamento" : ticket.awaitingReply ? "Aguardando resposta" : "Aberto"}
             </span>
           </div>
           {ticket.id ? (
             <div className="chat-topo-acoes">
+              <Botao variante="fantasma" icone="atualizar" title="Buscar novas mensagens agora" aria-busy={atualizando} disabled={atualizando} onClick={atualizarAgora}>
+                Atualizar
+              </Botao>
               <Botao variante="fantasma" icone={resolvido ? "atualizar" : "check"} onClick={() => alternarStatus(ticket)}>
                 {resolvido ? "Reabrir" : "Marcar como resolvido"}
               </Botao>
@@ -372,7 +411,7 @@ export function Atendimento({ caminho, navegar }) {
         <div className="chat-rolagem">
           <ol className="chat-mensagens" aria-label="Mensagens do ticket" aria-live="polite">
             {messages.map((m) => <Mensagem key={m.id} mensagem={m} />)}
-            {ticket.awaitingReply && !messages.some((m) => m.pendente) ? <AguardandoResposta /> : null}
+            {!messages.some((m) => m.pendente) ? <Andamento automacao={ticket.automation} /> : null}
           </ol>
           <div ref={fimRef} />
         </div>

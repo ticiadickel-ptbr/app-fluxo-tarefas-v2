@@ -267,7 +267,7 @@ async function preparar() {
       if (estado.fase !== "correcao-solicitada") return parar("não há correção pendente.");
     } else if (estado.outcome === "code" && estado.fase !== "entregue") {
       return parar(`caso de código em andamento (${estado.fase}); mensagens novas ficam para a equipe.`);
-    } else if (["resultado-pronto", "entregue"].includes(estado.fase) && !doCliente.some((c) => c.id > (estado.ultimaMensagemCliente ?? 0))) {
+    } else if (["resultado-pronto", "entregue", "ensaio"].includes(estado.fase) && !doCliente.some((c) => c.id > (estado.ultimaMensagemCliente ?? 0))) {
       return parar("resultado já publicado e sem mensagem nova do cliente.");
     }
     if (!correcao && (estado.rodadas ?? 0) >= MAX_RODADAS) return parar(`limite de ${MAX_RODADAS} rodadas atingido.`);
@@ -334,6 +334,7 @@ async function publicar() {
   const { ok, erros } = validarResultado(resultado, requestId);
   const final = ok ? resultado : { requestId, outcome: "human-review", publicText: TEXTO_HUMANO, agents: [], allowedFiles: [], criteria: [], updates: [] };
   const codigo = ok && final.outcome === "code";
+  const ensaio = process.env.AGENT_DRY_RUN !== "false";
 
   const mensagens = [...(estado.mensagens ?? [])];
   const idResumo = `resumo:${requestId}:${estado.rodadas}:${estado.correcoes ?? 0}`;
@@ -347,10 +348,18 @@ async function publicar() {
       ...final.criteria.map((c) => `- Critério ${neutro(c.id)}: ${neutro(c.description)}`),
       codigo ? `- Revisor (${final.review.verdict}): ${neutro(final.review.text)}` : null,
       ...final.updates.map((u) => `- [${neutro(u.agent)}] ${neutro(u.internalText)}`),
-      `- Mensagem ao cliente (N1): ${neutro(final.publicText)}`,
+      ensaio
+        ? "- Ensaio (AGENT_DRY_RUN): nenhum agente de IA analisou o pedido, então NENHUMA resposta foi enviada ao cliente."
+        : `- Mensagem ao cliente (N1): ${neutro(final.publicText)}`,
     ].filter(Boolean);
     await comentar(n, linhas.join("\n"));
     mensagens.push(idResumo);
+  }
+
+  if (ensaio) {
+    // Ensaio: o resultado é simulado. Texto inventado não é publicado como se fosse o N1; o caso fica aberto, sem resposta.
+    await salvarEstado(n, comentarioId, { ...estado, outcome: final.outcome, mensagens, erro: null, fase: "ensaio" });
+    return;
   }
 
   if (codigo) {

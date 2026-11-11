@@ -126,3 +126,9 @@ Feita localmente, com GitHub, git e disco simulados, sem rede e sem IA. Passaram
 - **Merge automático:** `AUTO_MERGE=false` até você autorizar `true` (a `main` não tem proteção hoje).
 - **Provedor de IA:** sem adaptador, então a chamada real não acontece. O ensaio usa `AGENT_DRY_RUN=true`, que só simula respostas `answered`.
 - **Disparo real do caminho de código:** não foi exercitado no GitHub, porque o dry-run não produz código. Só a simulação local cobre essa parte.
+
+## Ajuste: acompanhamento do chat e fim da resposta "automática" (2026-11-11)
+
+- **Mensagens chegando só no final:** a tela só consultava enquanto a última mensagem era do cliente, então parava na primeira resposta do N1. Agora ela consulta a cada 4 s enquanto o atendimento estiver em andamento (`ticket.automation.working`) e quando a aba volta ao foco. O backend busca na issue a cada 6 s no máximo. O botão **Atualizar** força a busca na hora (`GET /api/tickets/:id?agora=1`, mínimo de 2 s).
+- **Resposta que parecia automática:** o balão fixo "Recebemos sua mensagem…" saiu da tela. No lugar entra uma linha de **andamento** (fase real da issue), sem avatar e sem aparência de agente. No modo de ensaio (`AGENT_DRY_RUN`), o controlador **não publica mais nenhuma resposta** ao cliente: a tela avisa que é um ensaio e que nenhum agente de IA analisou a mensagem.
+- **Resposta de verdade:** exige um provedor de IA. Enquanto `ADAPTADORES` em `automacao/controlador.mjs` estiver vazio e o `AGENT_DRY_RUN` ligado, nenhum agente responde.

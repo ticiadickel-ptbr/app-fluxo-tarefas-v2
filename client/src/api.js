@@ -45,7 +45,7 @@ export const api = {
   tickets: {
     listar: () => pedir("GET", "/tickets"),
     abrir: (content) => pedir("POST", "/tickets", { content }),
-    detalhe: (id) => pedir("GET", `/tickets/${id}`),
+    detalhe: (id, { agora = false } = {}) => pedir("GET", `/tickets/${id}${agora ? "?agora=1" : ""}`),
     editar: (id, mudanca) => pedir("PATCH", `/tickets/${id}`, corpo(mudanca)),
     excluir: (id) => pedir("DELETE", `/tickets/${id}`),
     responder: (id, content) => pedir("POST", `/tickets/${id}/messages`, { content }),
