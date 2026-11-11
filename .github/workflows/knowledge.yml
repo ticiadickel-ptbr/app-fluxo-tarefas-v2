@@ -1,0 +1,71 @@
+# Base de conhecimento (docs/knowledge): toda issue fechada e todo PR fechado ou integrado vira uma entrada com frontmatter,
+# que os agents consultam antes de trabalhar. O código vem sempre da main; nenhum código de PR é baixado ou executado.
+# O `sync` é idempotente e se recupera sozinho: gera o que estiver faltando, então um evento perdido é coberto pelo seguinte.
+name: knowledge
+
+on:
+  issues:
+    types: [closed]
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+  # Issues e PRs fechados pelo próprio ai-agents usam o token das Actions e não geram evento: este gatilho cobre esses casos.
+  workflow_run:
+    workflows: [ai-agents]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tipo:
+        description: Regenerar uma entrada (issue ou pr); vazio = só gerar o que falta
+        required: false
+        type: choice
+        options: ["", issue, pr]
+      numero:
+        description: Número da issue ou do PR a regenerar
+        required: false
+        type: string
+
+permissions: {}
+
+# Um commit de conhecimento por vez; o seguinte espera e parte da main atualizada.
+concurrency:
+  group: knowledge
+  cancel-in-progress: false
+
+jobs:
+  conhecimento:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Gerar entradas e índice
+        run: node automacao/conhecimento.mjs sync
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          KN_TIPO: ${{ github.event.issue && 'issue' || github.event.pull_request && 'pr' || inputs.tipo }}
+          KN_NUMERO: ${{ github.event.issue.number || github.event.pull_request.number || inputs.numero }}
+
+      # Comandos fixos: nada vindo de issue, PR ou comentário é interpolado aqui.
+      - name: Salvar na main (só docs/knowledge)
+        run: |
+          if [ -z "$(git status --porcelain -- docs/knowledge)" ]; then
+            echo "Base de conhecimento já está em dia."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- docs/knowledge
+          git commit -m "docs(knowledge): atualiza a base de conhecimento"
+          git pull --rebase origin main
+          git push origin HEAD:main

@@ -132,3 +132,12 @@ Feita localmente, com GitHub, git e disco simulados, sem rede e sem IA. Passaram
 - **Mensagens chegando só no final:** a tela só consultava enquanto a última mensagem era do cliente, então parava na primeira resposta do N1. Agora ela consulta a cada 4 s enquanto o atendimento estiver em andamento (`ticket.automation.working`) e quando a aba volta ao foco. O backend busca na issue a cada 6 s no máximo. O botão **Atualizar** força a busca na hora (`GET /api/tickets/:id?agora=1`, mínimo de 2 s).
 - **Resposta que parecia automática:** o balão fixo "Recebemos sua mensagem…" saiu da tela. No lugar entra uma linha de **andamento** (fase real da issue), sem avatar e sem aparência de agente. No modo de ensaio (`AGENT_DRY_RUN`), o controlador **não publica mais nenhuma resposta** ao cliente: a tela avisa que é um ensaio e que nenhum agente de IA analisou a mensagem.
 - **Resposta de verdade:** exige um provedor de IA. Enquanto `ADAPTADORES` em `automacao/controlador.mjs` estiver vazio e o `AGENT_DRY_RUN` ligado, nenhum agente responde.
+
+## Base de conhecimento (2026-11-11)
+
+- **Onde fica:** `docs/knowledge/`, com `README.md` (formato e regras), `INDEX.md` (gerado) e uma entrada por item (`issue-N.md`, `pr-N.md`), cada uma com frontmatter.
+- **Quando nasce uma entrada:** quando uma issue é fechada ou um PR é fechado ou integrado. O workflow `knowledge.yml` (código da `main`, sem executar código de PR) roda `automacao/conhecimento.mjs sync` e commita só em `docs/knowledge/`. O `sync` gera o que faltar, então um evento perdido é coberto pelo seguinte. O gatilho `workflow_run` cobre o que o `ai-agents` fecha com o token das Actions.
+- **Curadoria dos agents:** o coordenador devolve `knowledge` (`summary`, `tags`, `lessons`) no relatório; o controlador valida, guarda no estado da issue e o gerador usa na entrada. Sem curadoria, a entrada traz só os fatos do GitHub e diz isso em `source`.
+- **Consulta antes de trabalhar:** todos os perfis em `.github/agents/` mandam ler o índice e as entradas parecidas, e o controlador injeta o índice e as 4 entradas mais relevantes no prompt do coordenador, antes das instruções.
+- **Ensaio não é conhecimento:** casos de `AGENT_DRY_RUN` entram no índice como `outcome: "ensaio"`, sem o texto simulado, e nunca entram no prompt.
+- **Backfill de hoje:** o repositório tinha 1 issue fechada (#4, um ensaio) e nenhum PR, então só `issue-4.md` foi gerada. O repositório original da aula também não tem PRs.
