@@ -89,7 +89,7 @@ export function validarResultado(r, requestId) {
   else if (PROIBIDO_NO_TEXTO.test(r.publicText)) erros.push("publicText com conteúdo proibido");
   if (!lista(r.agents) || !lista(r.allowedFiles) || !lista(r.criteria) || !lista(r.updates)) erros.push("agents, allowedFiles, criteria e updates devem ser listas");
   else {
-    if (r.updates.length > 20 || !r.updates.every((u) => /^[A-Za-z0-9:_-]{1,64}$/.test(u?.id ?? "") && typeof u.agent === "string" && typeof u.internalText === "string" && typeof u.publicText === "string"))
+    if (r.updates.length > 20 || !r.updates.every((u) => /^[A-Za-z0-9:_-]{1,64}$/.test(u?.id ?? "") && typeof u.agent === "string" && typeof u.internalText === "string" && typeof u.publicText === "string" && !PROIBIDO_NO_TEXTO.test(u.internalText + u.publicText)))
       erros.push("updates com formato inválido");
     if (r.outcome === "code") {
       if (!r.allowedFiles.length || !r.allowedFiles.every(caminhoPermitido)) erros.push("allowedFiles vazio ou fora do escopo permitido");
@@ -268,7 +268,10 @@ async function aplicar() {
   const git = (...args) => execFileSync("git", args, { cwd: RAIZ, stdio: "inherit" });
   const branch = `ai/issue-${n}-${m.requestId.slice(0, 8)}`;
   git("checkout", "-b", branch);
-  for (const c of m.changes) writeFileSync(join(RAIZ, c.path), c.content);
+  for (const c of m.changes) {
+    mkdirSync(dirname(join(RAIZ, c.path)), { recursive: true });
+    writeFileSync(join(RAIZ, c.path), c.content);
+  }
   git("add", "--", ...m.changes.map((c) => c.path));
   git("-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com", "commit", "-m", `ai: pedido da issue #${n} (${m.requestId})`);
   git("push", "origin", branch);

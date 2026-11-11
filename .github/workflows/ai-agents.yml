@@ -121,6 +121,7 @@ jobs:
   # Build da proposta: código gerado roda aqui, sem segredos e só com leitura.
   conferir-pr:
     needs: propor-pr
+    if: needs.propor-pr.outputs.branch != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
